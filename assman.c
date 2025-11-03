@@ -31,13 +31,11 @@ AssNode
 }
 AssNode;
 
-static struct
+struct
 AssMan
 {
 	AssNode *root;
-	size_t   node_count;
-}
-assman;
+};
 
 
 static size_t
@@ -86,7 +84,6 @@ AssNode_new(const char *fragment, Asset *asset)
 	node->asset  = asset;
 
 	strcpy(node->fragment, fragment);
-	assman.node_count++;
 	return node;
 }
 
@@ -110,8 +107,7 @@ AssNode_free(AssNode *self)
 	if (self->asset) {
 		Asset_free(self->asset);
 	}
-
-	assman.node_count--;
+	
 	free(self);
 }
 
@@ -208,7 +204,7 @@ AssNode_insert(AssNode **self, const char *path, Asset *asset)
 }
 
 static void
-AssNode_unlink(AssNode *node)
+AssNode_unlink(AssNode *node, AssMan *assman)
 {
     if (!node) return;
     
@@ -217,7 +213,7 @@ AssNode_unlink(AssNode *node)
     } else if (node->parent) {
         node->parent->child = node->next;
     } else {
-        assman.root = node->next;
+        assman->root = node->next;
     }
     
     if (node->next) {
@@ -226,8 +222,30 @@ AssNode_unlink(AssNode *node)
 }
 
 
+/******************
+	A S S M A N
+******************/
+AssMan *
+AssMan_new(void)
+{
+	AssMan *assman = malloc(sizeof(AssMan));
+	if (!assman) return NULL;
+
+	assman->root = NULL;
+
+	return assman;
+}
+
+void
+AssMan_free(AssMan *assman)
+{
+	AssMan_clear(assman);
+	free(assman);
+}
+
 void *
 AssMan_load(
+	AssMan       *assman,
 	const char   *path, 
 	AssLoaderFn   loader, 
 	void         *load_data, 
@@ -235,17 +253,17 @@ AssMan_load(
 	void         *release_data
 )
 {
-	if (!assman.root) {
+	if (!assman->root) {
 		Asset *asset     = Asset_new(
 				loader(path, load_data),
 				releaser,
 				release_data
 			);
-		assman.root = AssNode_new(path, asset);
+		assman->root = AssNode_new(path, asset);
 		return asset->data;
 	}
 
-	AssNode *node = AssNode_walk(assman.root, path);
+	AssNode *node = AssNode_walk(assman->root, path);
 	if (node && node->asset) {
 		/* Already loaded; increment ref_count */
 		node->asset->ref_count++;
@@ -258,15 +276,14 @@ AssMan_load(
 			releaser,
 			release_data
 		);
-	AssNode_insert(&assman.root, path, asset);
-	
+	AssNode_insert(&assman->root, path, asset);
 	return asset->data;
 }
 
 void
-AssMan_release(const char *path)
+AssMan_release(AssMan *assman, const char *path)
 {
-	AssNode *node = AssNode_walk(assman.root, path);
+	AssNode *node = AssNode_walk(assman->root, path);
 
 	if (!node) return;
 	if (!node->asset) return;
@@ -281,15 +298,13 @@ AssMan_release(const char *path)
 
 	if (node->child) return;
 	
-	AssNode_unlink(node);
-	assman.node_count--;
+	AssNode_unlink(node, assman);
 	free(node);
 }
 
 void
-AssMan_clear(void)
+AssMan_clear(AssMan *assman)
 {
-	AssNode_free(assman.root);
-	assman.root       = NULL;
-	assman.node_count = 0;
+	AssNode_free(assman->root);
+	assman->root       = NULL;
 }
