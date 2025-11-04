@@ -23,6 +23,7 @@ void   *AssMan_load(
 		void         *release_data
 	);
 void    AssMan_release(      AssMan *assman, const char *path);
+void    AssMan_clear(        AssMan *assman);
 void    AssMan_clearAssets(  AssMan *assman);
 void    AssMan_clearRegistry(AssMan *assman);
 

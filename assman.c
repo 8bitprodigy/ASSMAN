@@ -1,5 +1,6 @@
 #include <ctype.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -8,6 +9,7 @@
 
 
 #define BUCKET_COUNT 37
+
 
 typedef struct
 Asset
@@ -45,7 +47,7 @@ struct
 AssMan
 {
 	AssNode *root;
-	AssType *type_buckets[BUCKET_COUNT];
+	AssType *filetype_buckets[BUCKET_COUNT];
 };
 
 
@@ -58,16 +60,16 @@ hash_extension(const char *ext)
 {
 	/* Skip leading '.' if present */
 	if (ext[0] == '.') ext++;
-	if (!ext[0]) return 36; /* Empty -- goes in the "other" bucket */
+	if (!ext[0]) return BUCKET_COUNT - 1; /* Empty -- goes in the "other" bucket */
 
 	char c = tolower(ext[0]);
 
 	if ('a' <= c && c <= 'z')
-		return c - 'a';        /* Buckets 0-25 */
+		return c - 'a';          /* Buckets 0-25 */
 	else if ('0' <= c && c <= '9')
-		return 26 + (c - '0'); /* Buckets 26-35 */
+		return 26 + (c - '0');   /* Buckets 26-35 */
 	else
-		return 36;             /* "other" bucket for odd extensions */
+		return BUCKET_COUNT - 1; /* "other" bucket for odd extensions */
 }
 
 static size_t
@@ -81,6 +83,15 @@ longest_common_prefix(const char *a, const char *b)
 
 	return i;
 }
+
+static char *
+strdup_local(const char *s) {
+    size_t  len = strlen(s) + 1;
+    char   *d   = malloc(len);
+    if (d) memcpy(d, s, len);
+    return d;
+}
+
 
 
 static Asset *
@@ -275,8 +286,7 @@ void
 AssMan_free(AssMan *assman)
 {
 	if (!assman) return;
-	AssMan_clearAssets(assman);
-	AssMan_clearRegistry(assman);
+	AssMan_clear(assman);
 	free(assman);
 }
 
@@ -284,18 +294,17 @@ AssMan_free(AssMan *assman)
 	Methods
 */
 AssType *
-AssMan__findFiletype(Assman *assman, const char *ext)
+AssMan__findFiletype(AssMan *assman, const char *ext)
 {
 	size_t ext_hash = hash_extension(ext);
 
-	AssType *ass_type = assman->type_buckets[ext_hash];
+	AssType *ass_type = assman->filetype_buckets[ext_hash];
 
 	while(ass_type) {
 		if (strcasecmp(ext, ass_type->extension) == 0)
 			return ass_type;
 		ass_type = ass_type->next;
 	}
-
 	return NULL;
 }
 
@@ -312,23 +321,23 @@ AssMan_registerFiletype(
 
 	AssType *existing = AssMan__findFiletype(assman, extension);
 	if (existing) {
-		existing->loader   = loader;
-		existing->releaser = releaser;
+		existing->Load    = loader;
+		existing->Release = releaser;
 		return;
 	}
 	
 	size_t bucket = hash_extension(extension);
 	
-	FileTypeNode *node               = malloc(sizeof(FileTypeNode));
+	AssType *node                    = malloc(sizeof(AssType));
 	if (!node) return;
 	
-	node->extension                  = strdup(extension);
+	node->extension                  = strdup_local(extension);
 	if (!node->extension) {
 		free(node);
 		return;
 	}
-	node->loader                     = loader;
-	node->releaser                   = releaser;
+	node->Load                       = loader;
+	node->Release                    = releaser;
 	node->next                       = assman->filetype_buckets[bucket];
 	assman->filetype_buckets[bucket] = node;
 }
@@ -341,11 +350,15 @@ AssMan_load(
 	void         *release_data
 )
 {
-	const char *ext = strrchar(path, '.');
-	if (!ext) return NULL;
+	const char *ext = strrchr(path, '.'); ext++;
+	if (!ext) {
+		return NULL;
+	}
 
 	AssType *ass_type = AssMan__findFiletype(assman, ext);
-	if (!ass_type) return NULL;
+	if (!ass_type) {
+		return NULL;
+	}
 	
 	if (!assman->root) {
 		Asset *asset     = Asset_new(
@@ -375,8 +388,8 @@ AssMan_load(
 void
 AssMan_release(AssMan *assman, const char *path)
 {
-	AssType *ass_type = AssMan__findFiletype(assman, ext);
-	if (!ass_type) return NULL;
+	AssType *ass_type = AssMan__findFiletype(assman, path);
+	if (!ass_type) return;
 	
 	AssNode *node = AssNode_walk(assman->root, path);
 
@@ -399,6 +412,13 @@ AssMan_release(AssMan *assman, const char *path)
 }
 
 void
+AssMan_clear(AssMan *assman)
+{
+	AssMan_clearAssets(assman);
+	AssMan_clearRegistry(assman);
+}
+
+void
 AssMan_clearAssets(AssMan *assman)
 {
 	AssNode_free(assman->root);
@@ -406,13 +426,13 @@ AssMan_clearAssets(AssMan *assman)
 }
 
 void
-AssMan_clearRegistry(Assman *assman)
+AssMan_clearRegistry(AssMan *assman)
 {
 	for (size_t i = 0; i < BUCKET_COUNT; i++) {
 		AssType *ass_type = assman->filetype_buckets[i];
 		while(ass_type) {
-			ass_type *next = ass_type->next;
-			free(ass_type->extentsion);
+			AssType *next = ass_type->next;
+			free(ass_type->extension);
 			free(ass_type);
 			ass_type = next;
 		}

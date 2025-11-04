@@ -4,7 +4,6 @@
 # Object files
 *.o
 *.ko
-*.obj
 *.elf
 
 # Linker output
@@ -53,3 +52,10 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+examples/raylib_example
+examples/sdl3_example
+examples/obj
+examples/obj/*
+examples/bin
+examples/bin/*

@@ -24,6 +24,8 @@ A simple standalone asset manager for games and such. Just copy `assman.h` and `
   
   - `void  AssMan_release( AssMan *assman, const char *path)`: Releases a resource if it's no longer in use anywhere else, otherwise, it decrements the refcount.
 
+  - `void  AssMan_clear( AssMan *assman,)`: Clears the entire manager of all assets and registred file types.
+  
   - `void  AssMan_clearAssets( AssMan *assman,)`: Clears the entire manager of all assets.
   
   - `void  AssMan_clearRegistry( AssMan *assman,)`: Clears the entire manager of all registered file types.
