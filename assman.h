@@ -9,16 +9,22 @@ typedef void  (*AssReleaseFn)(void      *asset, void *data);
 
 AssMan *AssMan_new(void);
 void    AssMan_free(AssMan *assman);
+
+void    AssMan_registerFiletype(
+		AssMan       *assman,
+		const char   *extension,
+		AssLoaderFn   loader,    
+		AssReleaseFn  releaser
+	);
 void   *AssMan_load(
-	AssMan       *assman, 
-	const char   *path, 
-	AssLoaderFn   loader,   
-	void         *load_data, 
-	AssReleaseFn  releaser, 
-	void         *release_data
-);
-void    AssMan_release(AssMan *assman, const char *path);
-void    AssMan_clear(AssMan *assman);
+		AssMan       *assman, 
+		const char   *path, 
+		void         *load_data, 
+		void         *release_data
+	);
+void    AssMan_release(      AssMan *assman, const char *path);
+void    AssMan_clearAssets(  AssMan *assman);
+void    AssMan_clearRegistry(AssMan *assman);
 
 
 #endif /* ASSMAN_H */

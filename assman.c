@@ -1,8 +1,13 @@
+#include <ctype.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "assman.h"
+
+
+#define BUCKET_COUNT 37
 
 
 static void AssNode_free_siblings(AssNode *);
@@ -12,7 +17,6 @@ typedef struct
 Asset
 {
 	void         *data;
-	AssReleaseFn  Release;
 	void         *release_data;
 	size_t        ref_count;
 }
@@ -31,12 +35,40 @@ AssNode
 }
 AssNode;
 
+typedef struct
+AssType
+{
+	char           *extension;
+	AssLoaderFn     Load;
+	AssReleaseFn    Release;
+	struct AssType *next;
+}
+AssType;
+
 struct
 AssMan
 {
 	AssNode *root;
+	AssType *type_buckets[BUCKET_COUNT];
 };
 
+
+static size_t
+hash_extension(const char *ext) 
+{
+	/* Skip leading '.' if present */
+	if (ext[0] == '.') ext++;
+	if (!ext[0]) return 36; /* Empty -- goes in the "other" bucket */
+
+	char c = tolower(ext[0]);
+
+	if ('a' <= c && c <= 'z')
+		return c - 'a';        /* Buckets 0-25 */
+	else if ('0' <= c && c <= '9')
+		return 26 + (c - '0'); /* Buckets 26-35 */
+	else
+		return 36;             /* "other" bucket for odd extensions */
+}
 
 static size_t
 longest_common_prefix(const char *a, const char *b)
@@ -52,12 +84,11 @@ longest_common_prefix(const char *a, const char *b)
 
 
 static Asset *
-Asset_new(void *data, AssReleaseFn releaser, void *release_data)
+Asset_new(void *data, void *release_data)
 {
 	Asset *asset        = malloc(sizeof(Asset));
 	asset->data         = data;
 	asset->ref_count    = 1;
-	asset->Release      = releaser;
 	asset->release_data = release_data;
 
 	return asset;
@@ -66,7 +97,6 @@ Asset_new(void *data, AssReleaseFn releaser, void *release_data)
 void
 Asset_free(Asset *self)
 {
-	self->Release(self->data, self->release_data);
 	free(self);
 }
 
@@ -225,6 +255,9 @@ AssNode_unlink(AssNode *node, AssMan *assman)
 /******************
 	A S S M A N
 ******************/
+/*
+	Constructor / Destructor
+*/
 AssMan *
 AssMan_new(void)
 {
@@ -232,6 +265,8 @@ AssMan_new(void)
 	if (!assman) return NULL;
 
 	assman->root = NULL;
+	for (size_t i = 0; i < BUCKET_COUNT; i++)
+        assman->filetype_buckets[i] = NULL;
 
 	return assman;
 }
@@ -239,24 +274,82 @@ AssMan_new(void)
 void
 AssMan_free(AssMan *assman)
 {
-	AssMan_clear(assman);
+	if (!assman) return;
+	AssMan_clearAssets(assman);
+	AssMan_clearRegistry(assman);
 	free(assman);
+}
+
+/*
+	Methods
+*/
+AssType *
+AssMan__findFiletype(Assman *assman, const char *ext)
+{
+	size_t ext_hash = hash_extension(ext);
+
+	AssType *ass_type = assman->type_buckets[ext_hash];
+
+	while(ass_type) {
+		if (strcasecmp(ext, ass_type->extension) == 0)
+			return ass_type;
+		ass_type = ass_type->next;
+	}
+
+	return NULL;
+}
+
+void
+AssMan_registerFiletype(
+	AssMan       *assman,
+	const char   *extension,
+	AssLoaderFn   loader,
+	AssReleaseFn  releaser
+)
+{
+    if (!assman || !extension || !loader || !releaser) return;
+	if (extension[0] == '.') extension++;
+
+	AssType *existing = AssMan__findFiletype(assman, extension);
+	if (existing) {
+		existing->loader   = loader;
+		existing->releaser = releaser;
+		return;
+	}
+	
+	size_t bucket = hash_extension(extension);
+	
+	FileTypeNode *node               = malloc(sizeof(FileTypeNode));
+	if (!node) return;
+	
+	node->extension                  = strdup(extension);
+	if (!node->extension) {
+		free(node);
+		return;
+	}
+	node->loader                     = loader;
+	node->releaser                   = releaser;
+	node->next                       = assman->filetype_buckets[bucket];
+	assman->filetype_buckets[bucket] = node;
 }
 
 void *
 AssMan_load(
 	AssMan       *assman,
 	const char   *path, 
-	AssLoaderFn   loader, 
 	void         *load_data, 
-	AssReleaseFn  releaser, 
 	void         *release_data
 )
 {
+	const char *ext = strrchar(path, '.');
+	if (!ext) return NULL;
+
+	AssType *ass_type = AssMan__findFiletype(assman, ext);
+	if (!ass_type) return NULL;
+	
 	if (!assman->root) {
 		Asset *asset     = Asset_new(
-				loader(path, load_data),
-				releaser,
+				ass_type->Load(path, load_data),
 				release_data
 			);
 		assman->root = AssNode_new(path, asset);
@@ -272,8 +365,7 @@ AssMan_load(
 
 	/* Node does not exist -- create new asset */
 	Asset *asset = Asset_new(
-			loader(path, load_data),
-			releaser,
+			ass_type->Load(path, load_data),
 			release_data
 		);
 	AssNode_insert(&assman->root, path, asset);
@@ -283,6 +375,9 @@ AssMan_load(
 void
 AssMan_release(AssMan *assman, const char *path)
 {
+	AssType *ass_type = AssMan__findFiletype(assman, ext);
+	if (!ass_type) return NULL;
+	
 	AssNode *node = AssNode_walk(assman->root, path);
 
 	if (!node) return;
@@ -292,7 +387,8 @@ AssMan_release(AssMan *assman, const char *path)
 		node->asset->ref_count--;
 		return;
 	}
-	
+
+	ass_type->Release(node->asset->data, node->asset->release_data);
 	Asset_free(node->asset);
 	node->asset = NULL;
 
@@ -303,8 +399,23 @@ AssMan_release(AssMan *assman, const char *path)
 }
 
 void
-AssMan_clear(AssMan *assman)
+AssMan_clearAssets(AssMan *assman)
 {
 	AssNode_free(assman->root);
 	assman->root       = NULL;
+}
+
+void
+AssMan_clearRegistry(Assman *assman)
+{
+	for (size_t i = 0; i < BUCKET_COUNT; i++) {
+		AssType *ass_type = assman->filetype_buckets[i];
+		while(ass_type) {
+			ass_type *next = ass_type->next;
+			free(ass_type->extentsion);
+			free(ass_type);
+			ass_type = next;
+		}
+		assman->filetype_buckets[i] = NULL;
+	}
 }
